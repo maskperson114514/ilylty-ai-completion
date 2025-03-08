@@ -1,0 +1,7 @@
+{
+    "host":"127.0.0.1",
+    "port":18090,
+    "completionModel":"deep_seek_v3",
+    "completionMaxRound":10,
+    "yuanbaoCookieString":""
+}
