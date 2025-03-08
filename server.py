@@ -256,7 +256,7 @@ def code_completion():
         "code": ''.join(map(str, code_list))
     }
     #后处理,害得靠自己
-    data["code"].replace(r"\\n",r"\n")
+    data["code"].replace(r"\n","\n")
     print(data)
     return jsonify(data)
 if __name__ == '__main__':
