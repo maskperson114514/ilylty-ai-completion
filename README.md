@@ -42,8 +42,13 @@ VSCode 代码补全插件
 ```bash
 python server.py
 ```
+```bash
+code --enable-proposed-api ilylty.ilylty-ai-completion
+```
+注意加上--enable-proposed-api ilylty.ilylty-ai-completion参数
 然后可以
 在vscode中对任意代码按快捷键了. :)
+
 
 ## 编译指南(如果你想修改插件配置的话)
 VSCode 插件默认连接地址：`http://127.0.0.1:18090/code_completion`
