@@ -10,7 +10,8 @@ VSCode 代码补全插件
 
 
 ## 安装方法
-- vscode
+- vscode(添加--enable-proposed-api ilylty.ilylty-ai-completion参数)
+  - code --enable-proposed-api ilylty.ilylty-ai-completion
   - 将插件拖入vscode的扩展侧边栏，
   - 配置快捷键 先按ctrl+k，再按ctrl+s, 搜索ilylty.AI.completion.trigger
     - 推荐按住F1+点按F2         :D
