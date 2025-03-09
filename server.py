@@ -1,16 +1,33 @@
 from flask import Flask, jsonify, request
 import requests
-import json
+import json,re
 
-system_prompt= """
-请补全以下代码片段中的 <cursor> 部分。只输出 <cursor> 部分应该填入的代码，不要包含任何其他字符、单词、解释、说明或代码分隔符（例如 ```）。严格按照原代码的缩进和格式。
+system_prompt= ["""请补全以下代码片段中的 <cursor> 部分。只输出 <cursor> 部分应该填入的代码，不要包含任何其他字符、单词、解释、说明或代码分隔符（例如 ```）。严格按照原代码的缩进和格式。
 - 用户可能发送路径，注意路径结构和后缀，你可以预测要补全什么代码。例如，如果路径是 "/static/js/main.js"，则可能与静态文件服务相关；如果路径是 "/api/users"，则可能与 API 路由相关；如果路径是 "/templates/index.html",则可能与模板渲染有关。
 
 预期输出格式：
 [直接输出<cursor>部分的代码，不包含任何其他内容]
 
-用户:$
-"""
+用户:$""",
+"""请根据提供的文件路径、功能描述和代码上下文，实现相应的代码函数或代码片段。
+
+输入信息:
+
+•   文件路径 (path):  指示代码文件类型和预期编程语言，例如 './sort.py' 表示 Python 文件。
+•   功能描述 (功能):  简要描述代码的功能，例如 '一个快速排序'。
+•   函数签名:  包含函数名，形参，形参类型，返回类型。
+•   代码上下文 (context):  已有的代码片段。
+
+输出要求:
+
+•   仅输出代码:  请只输出完整可运行的单个函数，不要包含任何额外的解释性文本，不要对话式回复，注释只能在代码内部。
+•   代码语言:  根据文件路径的文件扩展名推断编程语言，例如 '.py' 为 Python, '.cpp' 为 C++。
+•   完整函数:  输出完整的函数定义，可以直接复制粘贴到对应文件中运行。
+请根据以上提示，准确且严格地生成代码。
+
+$
+""",
+]
 
 def parse_sse_data_many(sse_text):
     """
@@ -66,8 +83,6 @@ def parse_sse_data(line):
             return {"type": "marker", "content": marker_string}
         else:
             return {"type": "other_data", "content": data_content}
-
-
 class yuanBao:
     def __init__(self, model = "deep_seek", cookies = ""):#deep_seek,hunyuan_t1,deep_seek_v3
         self.session = requests.Session()
@@ -171,8 +186,6 @@ class yuanBao:
     def test_cookie(self):
         d = self.session.get("https://httpbin.org/get").text
         print(d)
-
-
 def openai_api_call(user_prompt, api_key="", model="Qwen/Qwen2.5-Coder-32B-Instruct"):
     # API 的 URL
     print(user_prompt)
@@ -204,22 +217,78 @@ def openai_api_call(user_prompt, api_key="", model="Qwen/Qwen2.5-Coder-32B-Instr
     else:
         # 如果请求失败，抛出异常或返回错误信息
         raise Exception(f"API 请求失败，状态码: {response.status_code}, 错误信息: {response.text}")
-
-
-app = Flask(__name__)
-YB_sessions = {}
 def read_config(file_path):
     """读取配置文件并返回配置内容"""
     with open(file_path, 'r', encoding='utf-8') as file:
         config = json.load(file)
     return config
-#init
-CONFIG = read_config('serverConfig.json')
 
+
+app = Flask(__name__)
+YB_sessions = {}
+YB_func_sessions ={}
+CONFIG = None
+reFunc = re.compile("@func.*")
+
+#init
+def init():
+    global CONFIG
+    CONFIG = read_config('serverConfig.json')
+
+init()
+
+def code_completion(payload):
+    global YB_sessions
+    #code = openai_api_call(f"//path:{payload['path']}\n" + payload['context'])
+    #yuanbao
+    current_session,current_round = YB_sessions.get("p"+payload['path'],[None,CONFIG["completionMaxRound"]])
+    if (not current_session) or (current_round<=0):
+        current_session = yuanBao(model=CONFIG["completionModel"],cookies=CONFIG["yuanbaoCookieString"])
+        YB_sessions["p"+payload['path']] = [current_session, CONFIG["completionMaxRound"]]
+        current_round = CONFIG["completionMaxRound"]
+    user_prompt = f"//path:{payload['path']}\n" + payload['context']
+    if current_round%3==CONFIG["completionMaxRound"]%3:#每3次发送system_prompt,防止llm忘记
+        user_prompt = system_prompt[0].replace("$", user_prompt, 1)
+    
+    code_list = []
+    for word in current_session.chat_with_stream(prompt=user_prompt):
+        if word == None:
+            continue
+        if word["type"] == 'data':
+            if word["content"]["type"] == "text":
+                code_list.append(word["content"].get('msg',""))
+    YB_sessions["p"+payload['path']][1] -=1
+    return ''.join(map(str, code_list))
+
+def func_completion(payload):
+    global YB_func_sessions
+    current_session,current_round = YB_sessions.get("p"+payload['path'],[None,2])
+    if (not current_session) or (current_round<=0):
+        current_session = yuanBao(model='deep_seek',cookies=CONFIG["yuanbaoCookieString"])
+        YB_sessions["p"+payload['path']] = [current_session, 2]
+        current_round = 2
+    payload['context'] = payload['context'].replace("<cursor>","",1)
+    funcLine = re.findall(reFunc,payload['context'])[0]
+    _, funcSign, funcDesc = funcLine.split("|")#函数签名，函数描述
+    user_prompt = f"//path:{payload['path']}"
+    if funcSign != "":user_prompt+=f"\n//函数签名:{funcSign}"
+    user_prompt += f"\n//函数功能:{funcDesc}\n//context:{payload['context']}"
+    
+    user_prompt = system_prompt[1].replace("$", user_prompt, 1)
+    
+    code_list = []
+    for word in current_session.chat_with_stream(prompt=user_prompt):
+        if word == None:
+            continue
+        if word["type"] == 'data':
+            if word["content"]["type"] == "text":
+                code_list.append(word["content"].get('msg',""))
+    YB_sessions["p"+payload['path']][1] -=1
+    code = ''.join(map(str, code_list))
+    return code
 
 @app.route('/code_completion', methods=['POST'])
-def code_completion():
-    global YB_sessions
+def completion():
     # 示例数据
     """
     payload:{
@@ -233,30 +302,17 @@ def code_completion():
     """
     payload = request.json  # 获取请求中的 JSON 数据
     print(payload)
-    #code = openai_api_call(f"//path:{payload['path']}\n" + payload['context'])
-    #yuanbao
-    current_session,current_round = YB_sessions.get("p"+payload['path'],[None,CONFIG["completionMaxRound"]])
-    if (not current_session) or (current_round<=0):
-        current_session = yuanBao(model=CONFIG["completionModel"],cookies=CONFIG["yuanbaoCookieString"])
-        YB_sessions["p"+payload['path']] = [current_session, CONFIG["completionMaxRound"]]
-        current_round = CONFIG["completionMaxRound"]
-    user_prompt = f"//path:{payload['path']}\n" + payload['context']
-    if current_round%3==CONFIG["completionMaxRound"]%3:#每3次发送system_prompt,防止llm忘记
-        user_prompt = system_prompt.replace("$", user_prompt, 1)
-    
-    code_list = []
-    for word in current_session.chat_with_stream(prompt=user_prompt):
-        if word == None:
-            continue
-        if word["type"] == 'data':
-            if word["content"]["type"] == "text":
-                code_list.append(word["content"].get('msg',""))
-    YB_sessions["p"+payload['path']][1] -=1
+    if '@func' in payload['context']:#生成函数
+        code = func_completion(payload,)
+    else:#通用代码补全
+        code = code_completion(payload)
+    #害的靠自己
+    if "```" in code:
+        code = '\n'.join(map(str, code.splitlines()[3:-1]))
+    code = code.replace("\\n","\n")
     data = {
-        "code": ''.join(map(str, code_list))
+        "code": code
     }
-    #后处理,害得靠自己
-    data["code"].replace(r"\n","\n")
     print(data)
     return jsonify(data)
 if __name__ == '__main__':

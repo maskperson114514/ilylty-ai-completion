@@ -60,6 +60,7 @@ function activate(context) {
         // 补全生成逻辑（可根据需求扩展）
         async generateCompletions(line, pos, filePath) {
             const items = [];
+            vscode.window.showInformationMessage('代码生成已开始，请稍候...');
             try {
                 // 准备POST请求数据
                 const requestData = JSON.stringify({
@@ -88,9 +89,15 @@ function activate(context) {
                         });
                     }
                 }
+                else {
+                    // 处理HTTP错误响应
+                    vscode.window.showErrorMessage(`代码补全请求失败: HTTP ${response.status} - ${response.statusText}`);
+                }
             }
             catch (error) {
                 console.error('补全请求失败:', error);
+                // 向用户显示错误通知
+                vscode.window.showErrorMessage(`代码补全生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
             }
             return { items };
         }
